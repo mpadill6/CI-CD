@@ -1,0 +1,16 @@
+services:
+  app:
+    image: ghcr.io/${GITHUB_REPOSITORY:-local}/python-docker-ci-demo:${IMAGE_TAG:-dev}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s

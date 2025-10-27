@@ -1,0 +1,60 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  deploy-to-remote:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: SSH to remote and deploy
+        uses: appleboy/ssh-action@v1.2.1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            export GHCR_USERNAME="${{ github.actor }}"
+            export GHCR_TOKEN="${{ secrets.GITHUB_TOKEN }}"
+            export GITHUB_REPOSITORY="${{ github.repository }}"
+            export IMAGE_REF="ghcr.io/${{ github.repository }}:latest"
+            export APP_PORT="${{ vars.APP_PORT || 8000 }}"
+
+            mkdir -p ~/apps/${{ vars.APP_NAME || 'python-docker-ci-demo' }}
+            cd ~/apps/${{ vars.APP_NAME || 'python-docker-ci-demo' }}
+
+            # Write compose file if missing (first deploy)
+            if [ ! -f docker-compose.yml ]; then
+              cat > docker-compose.yml <<'YAML'
+              services:
+                app:
+                  image: ghcr.io/${{ github.repository }}:latest
+                  ports:
+                    - "${APP_PORT:-8000}:8000"
+                  restart: unless-stopped
+                  healthcheck:
+                    test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+                    interval: 10s
+                    timeout: 3s
+                    retries: 5
+                    start_period: 10s
+              YAML
+            fi
+
+            # Deploy with latest image
+            docker login ghcr.io -u "$GHCR_USERNAME" -p "$GHCR_TOKEN"
+            docker pull ghcr.io/${{ github.repository }}:latest
+            docker compose up -d --remove-orphans
+
+            # Show status
+            docker ps --format '{{.Names}}	{{.Image}}	{{.Status}}'
